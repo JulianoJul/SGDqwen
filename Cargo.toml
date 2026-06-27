@@ -1,0 +1,20 @@
+[package]
+name = "sgd-local"
+version = "0.1.0"
+edition = "2021"
+description = "Sistema de Gestión Documental - Versión Local"
+
+[dependencies]
+eframe = "0.27"
+egui = "0.27"
+rusqlite = { version = "0.31", features = ["bundled"] }
+uuid = { version = "1", features = ["v4"] }
+chrono = "0.4"
+rfd = "0.14"
+opener = "0.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+pdf-extract = "0.7"
+calamine = "0.26"
+sha2 = "0.10"
+notify = "7"

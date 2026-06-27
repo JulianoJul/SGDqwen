@@ -1,0 +1,18 @@
+{
+  "theme": "ElAri",
+  "language": "Spanish",
+  "confirm_delete": true,
+  "auto_open_after_import": false,
+  "font_size": 14.0,
+  "reduced_motion": false,
+  "table_density": 18.0,
+  "show_column_type": true,
+  "show_column_size": true,
+  "show_column_date": true,
+  "trash_auto_delete_days": 70,
+  "backup_enabled": false,
+  "backup_interval_hours": 24,
+  "backup_path": "",
+  "watch_folder_enabled": false,
+  "watch_folder_path": ""
+}
