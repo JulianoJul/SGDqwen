@@ -11,10 +11,10 @@ use rusqlite::Connection;
 use crate::db;
 use crate::models::{
     AutoRule, Category, category_icon, CATEGORY_ICONS, DAY_NAMES_EN, DAY_NAMES_ES, DB_FILENAME,
-    default_base_path, default_categories, FILE_TYPE_STYLES, MONTH_NAMES_EN, MONTH_NAMES_ES,
-    Document, DocumentRelation, DocumentVersion, file_type_to_category_name, HistoryEntry,
-    is_default_category, Language, Reminder, SETTINGS_FILENAME, Settings, Template, Theme,
-    UndoAction,
+    DEFAULT_FILE_TYPE_STYLE, default_base_path, default_categories, default_category_names,
+    FILE_TYPE_STYLES, MONTH_NAMES_EN, MONTH_NAMES_ES, Document, DocumentRelation,
+    DocumentVersion, file_type_to_category_name, HistoryEntry, is_default_category, Language,
+    Reminder, SETTINGS_FILENAME, Settings, Template, Theme, UndoAction,
 };
 use crate::storage::Storage;
 
@@ -22,6 +22,15 @@ use crate::storage::Storage;
 /// En el futuro, implementar lookup real con el Language proporcionado.
 fn tr(_lang: Language, es: &'static str, _en: &'static str) -> &'static str {
     es
+}
+
+macro_rules! tr_fmt {
+    ($l:expr, $es:literal, $en:literal $(, $arg:expr)* $(,)?) => {{
+        match $l {
+            Language::Spanish => format!($es $(, $arg)*),
+            Language::English => format!($en $(, $arg)*),
+        }
+    }};
 }
 
 const SIZE_UNITS: &[&str] = &["B", "KB", "MB", "GB"];
@@ -44,6 +53,9 @@ fn month_name_es(m: u32) -> &'static str {
 fn month_name_en(m: u32) -> &'static str {
     MONTH_NAMES_EN.get(m as usize - 1).copied().unwrap_or("")
 }
+fn month_name(l: Language, m: u32) -> &'static str {
+    match l { Language::Spanish => month_name_es(m), Language::English => month_name_en(m) }
+}
 
 
 
@@ -58,7 +70,7 @@ fn get_file_stem(path: impl AsRef<Path>) -> String {
 fn file_type_style(ft: &str) -> (&'static str, egui::Color32) {
     let (icon, (r, g, b)) = FILE_TYPE_STYLES.iter().find(|(t, _, _)| *t == ft)
         .map(|(_, icon, rgb)| (*icon, *rgb))
-        .unwrap_or(("\u{1F4C4}", (128, 128, 128)));
+        .unwrap_or(DEFAULT_FILE_TYPE_STYLE);
     (icon, egui::Color32::from_rgb(r, g, b))
 }
 
@@ -505,20 +517,16 @@ impl SgdApp {
                 return Self::sanitize_folder_name(&cat.name);
             }
         }
-        match get_extension(source_path).as_str() {
-            "pdf" => "pdf".to_string(),
-            "xlsx" | "xls" => "excel".to_string(),
-            "docx" => "docs".to_string(),
-            "pptx" => "presentaciones".to_string(),
-            _ => "otros".to_string(),
-        }
+        file_type_to_category_name(&get_extension(source_path))
+            .map(|name| name.to_lowercase())
+            .unwrap_or_else(|| "otros".to_string())
     }
 
     fn ensure_category_dirs(&self) {
         for cat in &self.categories {
             let _ = self.storage.ensure_subdir(&Self::sanitize_folder_name(&cat.name));
         }
-        for (name, _, _) in default_categories() {
+        for name in default_category_names() {
             let _ = self.storage.ensure_subdir(&name.to_lowercase());
         }
         let _ = self.storage.ensure_subdir("otros");
@@ -546,7 +554,7 @@ impl SgdApp {
         let subdir = self.resolve_storage_subdir(category_ids, source_path);
         let result = match self.storage.import_file(source_path, &subdir) {
             Ok((rel_path, original_name, size)) => {
-                let file_type = rel_path.rsplit('.').next().unwrap_or("pdf").to_string();
+                let file_type = get_extension(source_path);
                 let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
                 let id = uuid::Uuid::new_v4().to_string();
                 let content_text = extract_text(source_path);
@@ -995,10 +1003,7 @@ impl eframe::App for SgdApp {
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
                             let sel_count = self.selected_docs.len();
-                            ui.label(match l {
-                                Language::Spanish => format!("{} seleccionado(s)", sel_count),
-                                Language::English => format!("{} selected", sel_count),
-                            });
+                            ui.label(tr_fmt!(l, "{} seleccionado(s)", "{} selected", sel_count));
                             if !self.showing_trash {
                                 if ui.button(format!("\u{1F5D1} {}", tr(l, "Mover a Papelera", "Move to Trash"))).clicked() {
                                     let ids: Vec<String> = self.selected_docs.iter().cloned().collect();
@@ -1034,10 +1039,7 @@ impl eframe::App for SgdApp {
                                                 let _ = std::fs::copy(&src, &dest_path);
                                             }
                                         }
-                                        self.set_status(match l {
-                                            Language::Spanish => format!("Exportados {} documento(s).", sel_count),
-                                            Language::English => format!("Exported {} document(s).", sel_count),
-                                        });
+                                        self.set_status(tr_fmt!(l, "Exportados {} documento(s).", "Exported {} document(s).", sel_count));
                                     }
                                 }
                             } else {
@@ -1182,10 +1184,7 @@ impl eframe::App for SgdApp {
                                             let full_path = self.storage.get_full_path(&doc.file_path);
                                             if let Some(parent) = full_path.parent() {
                                                 if opener::open(parent).is_err() {
-                                                    self.set_status(match l {
-                                                        Language::Spanish => "No se pudo abrir la carpeta.".to_string(),
-                                                        Language::English => "Could not open folder.".to_string(),
-                                                    });
+                                                    self.set_status(tr(l, "No se pudo abrir la carpeta.", "Could not open folder.").to_string());
                                                 }
                                             }
                                             ui.close_menu();
@@ -1226,10 +1225,7 @@ impl eframe::App for SgdApp {
                                                     .save_file();
                                                 if let Some(dest_path) = dest {
                                                     match std::fs::copy(&src_path, &dest_path) {
-                                                        Ok(_) => self.set_status(match l {
-                                                            Language::Spanish => "Documento exportado con éxito.".to_string(),
-                                                            Language::English => "Document exported successfully.".to_string(),
-                                                        }),
+                                                        Ok(_) => self.set_status(tr(l, "Documento exportado con éxito.", "Document exported successfully.").to_string()),
                                                         Err(e) => self.status_msg(l,
                         format!("Error al exportar: {}", e),
                         format!("Export error: {}", e),
@@ -1237,10 +1233,7 @@ impl eframe::App for SgdApp {
                                                     }
                                                 }
                                             } else {
-                                                self.set_status(match l {
-                                                    Language::Spanish => "Archivo de origen no encontrado.".to_string(),
-                                                    Language::English => "Source file not found.".to_string(),
-                                                });
+                                                self.set_status(tr(l, "Archivo de origen no encontrado.", "Source file not found.").to_string());
                                             }
                                             ui.close_menu();
                                         }
@@ -1248,10 +1241,7 @@ impl eframe::App for SgdApp {
                                             let do_delete = if self.settings.confirm_delete {
                                                 let confirm = rfd::MessageDialog::new()
                                                     .set_title(tr(l, "Confirmar", "Confirm"))
-                                                    .set_description(&match l {
-                                                        Language::Spanish => format!("Mover '{}' a la papelera?", doc.name),
-                                                        Language::English => format!("Move '{}' to trash?", doc.name),
-                                                    })
+                                                    .set_description(&tr_fmt!(l, "Mover '{}' a la papelera?", "Move '{}' to trash?", doc.name))
                                                     .set_buttons(rfd::MessageButtons::YesNo).show();
                                                 confirm == rfd::MessageDialogResult::Yes
                                             } else { true };
@@ -1412,7 +1402,7 @@ impl SgdApp {
                         ui.colored_label(egui::Color32::GRAY, tr(l, "(Aún no hay carpetas.)", "(No categories yet.)"));
                     } else {
                         ui.horizontal_wrapped(|ui| {
-                            for (name, _, _) in default_categories() {
+                            for name in default_category_names() {
                                 if let Some(cat) = self.categories.iter().find(|c| c.name == *name) {
                                     let is_selected = self.add_selected_cats.contains(&cat.id);
                                                     let icon_flag = category_icon(cat.name.as_str());
@@ -1507,10 +1497,7 @@ impl SgdApp {
                         format!("Document '{}' updated.", doc.name),
                     );
                         } else {
-                            self.set_status(match l {
-                                Language::Spanish => "Error al actualizar el documento.".to_string(),
-                                Language::English => "Error updating document.".to_string(),
-                            });
+                            self.set_status(tr(l, "Error al actualizar el documento.", "Error updating document.").to_string());
                         }
                         self.needs_refresh = true;
                         self.show_edit_dialog = false;
@@ -1546,10 +1533,7 @@ impl SgdApp {
                                         let do_delete = if count > 0 && self.settings.confirm_delete {
                                             rfd::MessageDialog::new()
                                                 .set_title(tr(l, "Confirmar Eliminación", "Confirm Delete"))
-                                                .set_description(&match l {
-                                                    Language::Spanish => format!("La carpeta '{}' tiene {} documento(s). ¿Eliminar de todas formas?", cat.name, count),
-                                                    Language::English => format!("Category '{}' has {} document(s). Delete it anyway?", cat.name, count),
-                                                }).set_buttons(rfd::MessageButtons::YesNo).show()
+                                                .set_description(&tr_fmt!(l, "La carpeta '{}' tiene {} documento(s). ¿Eliminar de todas formas?", "Category '{}' has {} document(s). Delete it anyway?", cat.name, count)).set_buttons(rfd::MessageButtons::YesNo).show()
                                                 == rfd::MessageDialogResult::Yes
                                         } else { true };
                                         if do_delete {
@@ -1687,7 +1671,7 @@ impl SgdApp {
                         else { self.history_month -= 1; }
                         self.history_selected_day = None; self.history_entries.clear();
                     }
-                    let month_name = match l { Language::Spanish => month_name_es(self.history_month), Language::English => month_name_en(self.history_month) };
+                    let month_name = month_name(l, self.history_month);
                     ui.label(format!("{} {}", month_name, self.history_year));
                     if ui.button(">").clicked() {
                         if self.history_month == 12 { self.history_month = 1; self.history_year += 1; }
@@ -1727,11 +1711,11 @@ impl SgdApp {
                 ui.add_space(8.0); ui.separator(); ui.add_space(4.0);
                 if self.history_entries.is_empty() {
                     let day = self.history_selected_day.map(|d| format!("{}-{:02}-{:02}", self.history_year, self.history_month, d));
-                    if let Some(ref d) = day { ui.colored_label(egui::Color32::GRAY, match l { Language::Spanish => format!("Sin actividad el {}", d), Language::English => format!("No activity on {}", d) }); }
+                    if let Some(ref d) = day { ui.colored_label(egui::Color32::GRAY, tr_fmt!(l, "Sin actividad el {}", "No activity on {}", d)); }
                     else { ui.colored_label(egui::Color32::GRAY, tr(l, "Selecciona un día para ver el historial.", "Select a day to view history.")); }
                 } else {
                     let day = self.history_selected_day.unwrap_or(0);
-                    ui.label(match l { Language::Spanish => format!("Actividad del {}-{:02}-{:02}:", self.history_year, self.history_month, day), Language::English => format!("Activity on {:04}-{:02}-{:02}:", self.history_year, self.history_month, day) });
+                    ui.label(tr_fmt!(l, "Actividad del {}-{:02}-{:02}:", "Activity on {:04}-{:02}-{:02}:", self.history_year, self.history_month, day));
                     ui.add_space(4.0);
                     egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
                         for entry in &self.history_entries {
@@ -1933,12 +1917,11 @@ impl SgdApp {
 
                 ui.heading(tr(l, "Resumen", "Summary"));
                 ui.separator();
-                ui.label(match l { Language::Spanish => format!("Total documentos: {}", total_docs), Language::English => format!("Total documents: {}", total_docs) });
-                ui.label(match l { Language::Spanish => format!("Tamaño total: {}", format_size(total_size)), Language::English => format!("Total size: {}", format_size(total_size)) });
-                // Pending reminders count
+                ui.label(tr_fmt!(l, "Total documentos: {}", "Total documents: {}", total_docs));
+                ui.label(tr_fmt!(l, "Tamaño total: {}", "Total size: {}", format_size(total_size)));
                 let pending = self.pending_reminders.len();
                 if pending > 0 {
-                    ui.label(match l { Language::Spanish => format!("Recordatorios pendientes: {}", pending), Language::English => format!("Pending reminders: {}", pending) });
+                    ui.label(tr_fmt!(l, "Recordatorios pendientes: {}", "Pending reminders: {}", pending));
                 }
                 ui.add_space(12.0);
 
@@ -2321,10 +2304,7 @@ impl SgdApp {
                                         let dest = self.storage.get_full_path(&doc.file_path);
                                         if src.exists() {
                                             let _ = std::fs::copy(&src, &dest);
-                                            self.set_status(match l {
-                                                Language::Spanish => "Versión restaurada.".to_string(),
-                                                Language::English => "Version restored.".to_string(),
-                                            });
+                                            self.set_status(tr(l, "Versión restaurada.", "Version restored.").to_string());
                                             let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
                                             let new_ver = DocumentVersion {
                                                 id: uuid::Uuid::new_v4().to_string(),
@@ -2368,10 +2348,7 @@ impl SgdApp {
                         .pick_folder();
                     if let Some(dir) = dest {
                         match self.storage.backup_all(&dir) {
-                            Ok(_) => self.set_status(match l {
-                                Language::Spanish => "Respaldo creado con éxito.".to_string(),
-                                Language::English => "Backup created successfully.".to_string(),
-                            }),
+                            Ok(_) => self.set_status(tr(l, "Respaldo creado con éxito.", "Backup created successfully.").to_string()),
                             Err(e) => self.status_msg(l,
                         format!("Error al crear respaldo: {}", e),
                         format!("Backup error: {}", e),
@@ -2407,10 +2384,7 @@ impl SgdApp {
                 if self.settings.backup_enabled && !self.settings.backup_path.is_empty() {
                     if ui.button(tr(l, "Ejecutar Respaldo Ahora", "Run Backup Now")).clicked() {
                         match self.storage.backup_all(Path::new(&self.settings.backup_path)) {
-                            Ok(_) => self.set_status(match l {
-                                Language::Spanish => "Respaldo automático ejecutado.".to_string(),
-                                Language::English => "Automatic backup completed.".to_string(),
-                            }),
+                            Ok(_) => self.set_status(tr(l, "Respaldo automático ejecutado.", "Automatic backup completed.").to_string()),
                             Err(e) => self.status_msg(l,
                         format!("Error en respaldo: {}", e),
                         format!("Backup error: {}", e),

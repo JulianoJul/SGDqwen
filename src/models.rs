@@ -48,15 +48,13 @@ pub const FILE_TYPE_STYLES: &[(&str, &str, (u8, u8, u8))] = &[
     ("docx", "\u{1F4DD}", (40, 80, 160)),
     ("pptx", "\u{1F4F9}", (200, 100, 30)),
 ];
+pub const DEFAULT_FILE_TYPE_STYLE: (&str, (u8, u8, u8)) = ("\u{1F4C4}", (128, 128, 128));
 
 pub fn category_icon(name: &str) -> &'static str {
-    match name {
-        "PDF" => "\u{1F4C4}",
-        "Excel" => "\u{1F4CA}",
-        "Docs" => "\u{1F4DD}",
-        "Presentaciones" => "\u{1F4F9}",
-        _ => "",
-    }
+    default_categories().iter()
+        .find(|(n, _, _)| *n == name)
+        .map(|(_, _, icon)| *icon)
+        .unwrap_or("")
 }
 
 
@@ -399,4 +397,8 @@ impl Settings {
             let _ = std::fs::write(path, content);
         }
     }
+}
+
+pub fn default_category_names() -> Vec<&'static str> {
+    default_categories().iter().map(|(name, _, _)| *name).collect()
 }

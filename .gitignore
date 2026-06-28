@@ -3,3 +3,4 @@ sgd_data/
 output/
 *.db
 *.sqlite
+plan_modificaciones.md

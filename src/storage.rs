@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use sha2::{Sha256, Digest};
 use uuid::Uuid;
 
-use crate::models::FILES_SUBDIR;
+use crate::models::{DB_FILENAME, FILES_SUBDIR, SETTINGS_FILENAME};
 
 pub struct Storage {
     pub base_path: PathBuf,
@@ -71,14 +71,14 @@ impl Storage {
 
     pub fn backup_all(&self, dest_dir: &Path) -> io::Result<()> {
         fs::create_dir_all(dest_dir)?;
-        let db_path = self.base_path.join("documents.db");
+        let db_path = self.base_path.join(DB_FILENAME);
         if db_path.exists() {
-            let backup_db = dest_dir.join("documents.db");
+            let backup_db = dest_dir.join(DB_FILENAME);
             fs::copy(&db_path, &backup_db)?;
         }
-        let settings_path = self.base_path.join("settings.json");
+        let settings_path = self.base_path.join(SETTINGS_FILENAME);
         if settings_path.exists() {
-            fs::copy(&settings_path, dest_dir.join("settings.json"))?;
+            fs::copy(&settings_path, dest_dir.join(SETTINGS_FILENAME))?;
         }
         let files_dest = dest_dir.join("files");
         fn copy_dir(src: &Path, dst: &Path) -> io::Result<()> {

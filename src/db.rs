@@ -249,12 +249,14 @@ pub fn batch_permanently_delete(conn: &Connection, storage: &crate::storage::Sto
     // Single query to get all documents before deletion (avoid N+1)
     let placeholders: Vec<String> = ids.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect();
     let select_sql = format!("SELECT {} FROM documents WHERE id IN ({})", DOC_COLS, placeholders.join(","));
-    {
+    let docs: Vec<Document> = {
         let mut stmt = tx.prepare(&select_sql)?;
-        let docs: Vec<Document> = stmt.query_map(rusqlite::params_from_iter(ids), row_to_document)?
-            .collect::<Result<Vec<_>>>()?;
-        for doc in &docs {
-            let _ = storage.delete_file(&doc.file_path);
+        let mapped = stmt.query_map(rusqlite::params_from_iter(ids), row_to_document)?;
+        mapped.collect::<Result<Vec<_>>>()?
+    };
+    for doc in &docs {
+        if let Err(e) = storage.delete_file(&doc.file_path) {
+            eprintln!("Warning: failed to delete file '{}': {}", doc.file_path, e);
         }
     }
     let delete_sql = format!("DELETE FROM documents WHERE id IN ({})", placeholders.join(","));
