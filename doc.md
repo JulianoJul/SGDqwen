@@ -186,14 +186,18 @@ cargo run
 | 1 | `src/app.rs` | `db_path.to_str().unwrap()` → `.ok_or("Invalid path")?` | Posible panic con rutas no UTF-8 |
 | 2 | `src/app.rs` | Botón Guardar validado con `add_file_path.is_some()` | Posible panic al hacer unwrap de None |
 | 3 | `src/app.rs` | `days_in_month` usa `and_then` en vez de `unwrap()` | Posible panic con fechas inválidas |
-| 4 | `src/models.rs` | Nuevas constantes `DEFAULT_BASE_PATH`, `DB_FILENAME`, `SETTINGS_FILENAME`, `FILES_SUBDIR` | Eliminar hardcodeo de rutas y nombres de archivo |
-| 5 | `src/app.rs`, `src/storage.rs`, `src/db.rs` | Usar constantes en vez de literales `"./sgd_data"`, `"documents.db"`, `"settings.json"`, `"files"` | DRY + mantenibilidad |
-| 6 | `src/models.rs` | Nueva constante `DEFAULT_CATEGORIES`, helpers `is_default_category()`, `file_type_to_category_name()`, `category_icon()` | Eliminar hardcodeo de nombres de categorías en 10+ ubicaciones |
-| 7 | `src/app.rs` | Sidebar, add dialog, categories popup usan `DEFAULT_CATEGORIES` e `is_default_category` | DRY + mantenibilidad |
+| 4 | `src/models.rs` | `DEFAULT_BASE_PATH` ahora es `default_base_path()` que lee de env var `SGD_BASE_PATH` | Configurable vs hardcodeado |
+| 5 | `src/app.rs`, `src/storage.rs`, `src/db.rs` | Nuevas constantes `DB_FILENAME`, `SETTINGS_FILENAME`, `FILES_SUBDIR` | DRY + mantenibilidad |
+| 6 | `src/models.rs` | `default_categories()`, helpers `is_default_category()`, `file_type_to_category_name()`, `category_icon()` | Eliminar hardcodeo de nombres de categorías en 10+ ubicaciones |
+| 7 | `src/app.rs` | Sidebar, add dialog, categories popup usan `default_categories()` e `is_default_category` | DRY + mantenibilidad |
 | 8 | `src/app.rs` | `file_type_to_category_name()` reemplaza 3 mapeos duplicados ext→categoría | DRY |
-| 9 | `src/app.rs` | Nuevo método `status_msg()` para mensajes bilingües, ~15 llamadas migradas | DRY: elimina patrón `match l { Spanish => ..., English => ... }` repetido |
-| 10 | `src/db.rs` | `batch_permanently_delete` usa SELECT + IN en vez de N queries individuales | Performance: elimina N+1 |
-| 11 | `src/app.rs` | `month_name_es/en` usan arrays `MONTH_NAMES_ES/EN` en vez de match extenso | Código más limpio |
+| 9 | `src/app.rs` | Nuevo método `status_msg()` para mensajes bilingües, ~15 llamadas migradas | DRY: elimina patrón `match l` repetido |
+| 10 | `src/db.rs` | `batch_permanently_delete` envuelto en transacción | Consistencia: SELECT+DELETE ahora atómico |
+| 11 | `src/db.rs` | `batch_soft_delete`/`batch_permanently_delete` validan UUIDs | Seguridad: evitar SQL injection en placeholders dinámicos |
+| 12 | `src/app.rs`, `src/models.rs` | `get_extension()` y `get_file_stem()` helpers, reemplazan 11 duplicaciones | DRY |
+| 13 | `src/models.rs` | `CATEGORY_ICONS`, `MONTH_NAMES_ES/EN`, `DAY_NAMES_ES/EN`, `FILE_TYPE_STYLES` movidos a models.rs | Constantes en lugar único |
+| 14 | `src/app.rs` | `format_size` con array `SIZE_UNITS`, `highlight_text` con const `HIGHLIGHT_MARKER` | Constantes vs literales |
+| 15 | `src/app.rs` | `tr()` documentada como placeholder i18n | Claridad |
 
 ## Reglas del Proceso
 

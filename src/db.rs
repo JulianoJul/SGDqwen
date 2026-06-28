@@ -1,7 +1,7 @@
 use rusqlite::{Connection, Result, params};
 use std::collections::HashMap;
 
-use crate::models::{AutoRule, Category, DEFAULT_CATEGORIES, Document, DocumentRelation, DocumentVersion, HistoryEntry, Reminder, Template};
+use crate::models::{AutoRule, Category, default_categories, Document, DocumentRelation, DocumentVersion, HistoryEntry, Reminder, Template};
 
 fn migrate(conn: &Connection) -> Result<()> {
     let cols: Vec<String> = conn
@@ -144,7 +144,7 @@ pub fn init_db(db_path: &str) -> Result<Connection> {
 }
 
 pub fn ensure_default_categories(conn: &Connection) -> Result<()> {
-    for (name, desc, icon) in DEFAULT_CATEGORIES {
+    for (name, desc, icon) in default_categories() {
         let exists: bool = conn.query_row(
             "SELECT COUNT(*) FROM categories WHERE name=?1", params![name],
             |row| row.get::<_, i64>(0),
@@ -180,6 +180,11 @@ fn row_to_document(row: &rusqlite::Row) -> rusqlite::Result<Document> {
 }
 
 const DOC_COLS: &str = "id, name, file_type, file_path, original_name, size, description, notes, checksum, created_at, updated_at, favorite, deleted_at, content_text";
+
+fn is_valid_uuid(s: &str) -> bool {
+    s.len() == 36 && s.chars().filter(|c| *c == '-').count() == 4
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
 
 // Document CRUD
 
@@ -221,6 +226,9 @@ pub fn soft_delete_document(conn: &Connection, id: &str) -> Result<()> {
 
 pub fn batch_soft_delete(conn: &Connection, ids: &[String]) -> Result<()> {
     if ids.is_empty() { return Ok(()); }
+    if !ids.iter().all(|id| is_valid_uuid(id)) {
+        return Err(rusqlite::Error::InvalidParameterName("Invalid UUID in batch_soft_delete".into()));
+    }
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let placeholders: Vec<String> = ids.iter().enumerate().map(|(i, _)| format!("?{}", i + 2)).collect();
     let sql = format!("UPDATE documents SET deleted_at=?1 WHERE id IN ({})", placeholders.join(","));
@@ -234,17 +242,24 @@ pub fn batch_soft_delete(conn: &Connection, ids: &[String]) -> Result<()> {
 
 pub fn batch_permanently_delete(conn: &Connection, storage: &crate::storage::Storage, ids: &[String]) -> Result<()> {
     if ids.is_empty() { return Ok(()); }
+    if !ids.iter().all(|id| is_valid_uuid(id)) {
+        return Err(rusqlite::Error::InvalidParameterName("Invalid UUID in batch_permanently_delete".into()));
+    }
+    let tx = conn.unchecked_transaction()?;
     // Single query to get all documents before deletion (avoid N+1)
     let placeholders: Vec<String> = ids.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect();
     let select_sql = format!("SELECT {} FROM documents WHERE id IN ({})", DOC_COLS, placeholders.join(","));
-    let mut stmt = conn.prepare(&select_sql)?;
-    let docs: Vec<Document> = stmt.query_map(rusqlite::params_from_iter(ids), row_to_document)?
-        .collect::<Result<Vec<_>>>()?;
-    for doc in &docs {
-        let _ = storage.delete_file(&doc.file_path);
+    {
+        let mut stmt = tx.prepare(&select_sql)?;
+        let docs: Vec<Document> = stmt.query_map(rusqlite::params_from_iter(ids), row_to_document)?
+            .collect::<Result<Vec<_>>>()?;
+        for doc in &docs {
+            let _ = storage.delete_file(&doc.file_path);
+        }
     }
     let delete_sql = format!("DELETE FROM documents WHERE id IN ({})", placeholders.join(","));
-    conn.execute(&delete_sql, rusqlite::params_from_iter(ids))?;
+    tx.execute(&delete_sql, rusqlite::params_from_iter(ids))?;
+    tx.commit()?;
     Ok(())
 }
 

@@ -2,20 +2,26 @@ use serde::{Deserialize, Serialize};
 
 // ── Constants ──────────────────────────────────────────────
 
-pub const DEFAULT_BASE_PATH: &str = "./sgd_data";
+pub fn default_base_path() -> String {
+    std::env::var("SGD_BASE_PATH").unwrap_or_else(|_| "./sgd_data".to_string())
+}
 pub const DB_FILENAME: &str = "documents.db";
 pub const SETTINGS_FILENAME: &str = "settings.json";
 pub const FILES_SUBDIR: &str = "files";
 
-pub const DEFAULT_CATEGORIES: &[(&str, &str, &str)] = &[
+const DEFAULT_CATEGORIES_INTERNAL: &[(&str, &str, &str)] = &[
     ("PDF", "Documentos PDF", "\u{1F4C4}"),
     ("Excel", "Hojas de calculo Excel", "\u{1F4CA}"),
     ("Docs", "Documentos de Word", "\u{1F4DD}"),
     ("Presentaciones", "Presentaciones PowerPoint", "\u{1F4F9}"),
 ];
 
+pub fn default_categories() -> &'static [(&'static str, &'static str, &'static str)] {
+    DEFAULT_CATEGORIES_INTERNAL
+}
+
 pub fn is_default_category(name: &str) -> bool {
-    DEFAULT_CATEGORIES.iter().any(|(n, _, _)| *n == name)
+    default_categories().iter().any(|(n, _, _)| *n == name)
 }
 
 pub fn file_type_to_category_name(ext: &str) -> Option<&'static str> {
@@ -27,6 +33,21 @@ pub fn file_type_to_category_name(ext: &str) -> Option<&'static str> {
         _ => None,
     }
 }
+
+pub const CATEGORY_ICONS: &[&str] = &["\u{1F4C1}", "\u{1F4C2}", "\u{1F5C2}", "\u{1F4CE}", "\u{1F4DD}", "\u{1F3F7}"];
+
+pub const MONTH_NAMES_ES: [&str; 12] = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+pub const MONTH_NAMES_EN: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+pub const DAY_NAMES_ES: [&str; 7] = ["Lu", "Ma", "Mi", "Ju", "Vi", "Sa", "Do"];
+pub const DAY_NAMES_EN: [&str; 7] = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+
+pub const FILE_TYPE_STYLES: &[(&str, &str, (u8, u8, u8))] = &[
+    ("pdf", "\u{1F4C4}", (200, 50, 50)),
+    ("xlsx", "\u{1F4CA}", (30, 140, 60)),
+    ("xls", "\u{1F4CA}", (30, 140, 60)),
+    ("docx", "\u{1F4DD}", (40, 80, 160)),
+    ("pptx", "\u{1F4F9}", (200, 100, 30)),
+];
 
 pub fn category_icon(name: &str) -> &'static str {
     match name {
