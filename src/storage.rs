@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use sha2::{Sha256, Digest};
 use uuid::Uuid;
 
+use crate::models::FILES_SUBDIR;
+
 pub struct Storage {
     pub base_path: PathBuf,
     pub files_path: PathBuf,
@@ -11,7 +13,7 @@ pub struct Storage {
 
 impl Storage {
     pub fn new(base_path: &Path) -> Self {
-        let files_path = base_path.join("files");
+        let files_path = base_path.join(FILES_SUBDIR);
         Self { base_path: base_path.to_path_buf(), files_path }
     }
 
@@ -35,7 +37,7 @@ impl Storage {
         let dest = subdir_path.join(&filename);
         fs::copy(source, &dest)?;
         let size = fs::metadata(&dest)?.len() as i64;
-        let rel_path = format!("files/{}/{}", subdir, filename);
+        let rel_path = format!("{}/{}/{}", FILES_SUBDIR, subdir, filename);
         Ok((rel_path, original_name, size))
     }
 

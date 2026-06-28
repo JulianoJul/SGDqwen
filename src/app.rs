@@ -10,8 +10,10 @@ use rusqlite::Connection;
 
 use crate::db;
 use crate::models::{
-    AutoRule, Category, Document, DocumentRelation, DocumentVersion, HistoryEntry,
-    Language, Reminder, Settings, Template, Theme, UndoAction,
+    AutoRule, Category, category_icon, DB_FILENAME, DEFAULT_BASE_PATH, DEFAULT_CATEGORIES,
+    Document, DocumentRelation, DocumentVersion, file_type_to_category_name, HistoryEntry,
+    is_default_category, Language, Reminder, SETTINGS_FILENAME, Settings, Template, Theme,
+    UndoAction,
 };
 use crate::storage::Storage;
 
@@ -27,13 +29,16 @@ fn format_size(size: i64) -> String {
 }
 
 fn month_name_es(m: u32) -> &'static str {
-    match m { 1=>"Enero",2=>"Febrero",3=>"Marzo",4=>"Abril",5=>"Mayo",6=>"Junio",7=>"Julio",8=>"Agosto",9=>"Septiembre",10=>"Octubre",11=>"Noviembre",12=>"Diciembre",_=>"" }
+    MONTH_NAMES_ES.get(m as usize - 1).copied().unwrap_or("")
 }
 fn month_name_en(m: u32) -> &'static str {
-    match m { 1=>"January",2=>"February",3=>"March",4=>"April",5=>"May",6=>"June",7=>"July",8=>"August",9=>"September",10=>"October",11=>"November",12=>"December",_=>"" }
+    MONTH_NAMES_EN.get(m as usize - 1).copied().unwrap_or("")
 }
 
 const CATEGORY_ICONS: &[&str] = &["\u{1F4C1}", "\u{1F4C2}", "\u{1F5C2}", "\u{1F4CE}", "\u{1F4DD}", "\u{1F3F7}"];
+
+const MONTH_NAMES_ES: [&str; 12] = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+const MONTH_NAMES_EN: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
 fn file_type_style(ft: &str) -> (&'static str, egui::Color32) {
     match ft {
@@ -46,9 +51,9 @@ fn file_type_style(ft: &str) -> (&'static str, egui::Color32) {
 }
 
 fn days_in_month(year: i32, month: u32) -> u32 {
-    (if month == 12 { chrono::NaiveDate::from_ymd_opt(year+1, 1, 1) }
-     else { chrono::NaiveDate::from_ymd_opt(year, month+1, 1) })
-    .map(|d| d.pred_opt().unwrap().day()).unwrap_or(0)
+    let next = if month == 12 { chrono::NaiveDate::from_ymd_opt(year + 1, 1, 1) }
+               else { chrono::NaiveDate::from_ymd_opt(year, month + 1, 1) };
+    next.and_then(|d| d.pred_opt()).map(|d| d.day()).unwrap_or(0)
 }
 
 fn extract_text(path: &Path) -> String {
@@ -243,15 +248,15 @@ pub struct SgdApp {
 
 impl SgdApp {
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        let base_path = PathBuf::from("./sgd_data");
+        let base_path = PathBuf::from(DEFAULT_BASE_PATH);
         let storage = Storage::new(&base_path);
         storage.init()?;
 
-        let settings_path = base_path.join("settings.json");
+        let settings_path = base_path.join(SETTINGS_FILENAME);
         let settings = Settings::load(&settings_path);
 
-        let db_path = base_path.join("documents.db");
-        let db = db::init_db(db_path.to_str().unwrap())?;
+        let db_path = base_path.join(DB_FILENAME);
+        let db = db::init_db(db_path.to_str().ok_or("Invalid database path (non-UTF8)")?)?;
         db::ensure_default_categories(&db)?;
 
         // Auto-clean trash
@@ -379,6 +384,10 @@ impl SgdApp {
         self.status_clear_at = Some(Instant::now() + std::time::Duration::from_secs(6));
     }
 
+    fn status_msg(&mut self, l: Language, es: String, en: String) {
+        self.set_status(match l { Language::Spanish => es, Language::English => en });
+    }
+
     fn log_history(&self, action_type: &str, action_label: &str, document_id: Option<&str>) {
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
@@ -497,15 +506,15 @@ impl SgdApp {
         for cat in &self.categories {
             let _ = self.storage.ensure_subdir(&Self::sanitize_folder_name(&cat.name));
         }
-        for d in &["pdf", "excel", "docs", "presentaciones", "otros"] {
-            let _ = self.storage.ensure_subdir(d);
+        for (name, _, _) in DEFAULT_CATEGORIES {
+            let _ = self.storage.ensure_subdir(&name.to_lowercase());
         }
+        let _ = self.storage.ensure_subdir("otros");
     }
 
     fn auto_select_categories_for_path(&mut self, path: &Path) {
         self.add_selected_cats.clear();
         let ext = path.extension().unwrap_or_default().to_string_lossy().to_lowercase();
-        let map: [(&str, &str); 4] = [("pdf", "PDF"), ("xlsx", "Excel"), ("xls", "Excel"), ("docx", "Docs")];
         // First check auto-rules
         if let Ok(matched) = db::match_auto_rules(&self.db, &path.to_string_lossy()) {
             if !matched.is_empty() {
@@ -513,16 +522,8 @@ impl SgdApp {
                 return;
             }
         }
-        for (ext_match, cat_name) in &map {
-            if ext == *ext_match {
-                if let Some(cat) = self.categories.iter().find(|c| c.name == *cat_name) {
-                    self.add_selected_cats.push(cat.id.clone());
-                }
-                return;
-            }
-        }
-        if ext == "pptx" {
-            if let Some(cat) = self.categories.iter().find(|c| c.name == "Presentaciones") {
+        if let Some(cat_name) = file_type_to_category_name(&ext) {
+            if let Some(cat) = self.categories.iter().find(|c| c.name == cat_name) {
                 self.add_selected_cats.push(cat.id.clone());
             }
         }
@@ -554,28 +555,28 @@ impl SgdApp {
                     }
                     let label = format!("{} '{}'", tr(l, "Documento agregado", "Document added"), doc.name);
                     self.log_history("add", &label, Some(&id));
-                    self.set_status(match l {
-                        Language::Spanish => format!("Documento '{}' agregado exitosamente.", doc.name),
-                        Language::English => format!("Document '{}' added successfully.", doc.name),
-                    });
+                    self.status_msg(l,
+                        format!("Documento '{}' agregado exitosamente.", doc.name),
+                        format!("Document '{}' added successfully.", doc.name),
+                    );
                     if self.settings.auto_open_after_import {
                         let full_path = self.storage.get_full_path(&doc.file_path);
                         let _ = opener::open(full_path);
                     }
                     true
                 } else {
-                    self.set_status(match l {
-                        Language::Spanish => "Error al guardar el documento.".to_string(),
-                        Language::English => "Error saving document.".to_string(),
-                    });
+                    self.status_msg(l,
+                        "Error al guardar el documento.".to_string(),
+                        "Error saving document.".to_string(),
+                    );
                     false
                 }
             }
             Err(e) => {
-                self.set_status(match l {
-                    Language::Spanish => format!("Error al importar archivo: {}", e),
-                    Language::English => format!("Error importing file: {}", e),
-                });
+                self.status_msg(l,
+                        format!("Error al importar archivo: {}", e),
+                        format!("Error importing file: {}", e),
+                    );
                 false
             }
         };
@@ -592,17 +593,10 @@ impl SgdApp {
             if !matched.is_empty() { cats = matched; }
         }
         if cats.is_empty() {
-            if let Some(cat) = self.categories.iter().find(|c| c.name == "PDF") {
-                if ext == "pdf" { cats.push(cat.id.clone()); }
-            }
-            if let Some(cat) = self.categories.iter().find(|c| c.name == "Excel") {
-                if ext == "xlsx" || ext == "xls" { cats.push(cat.id.clone()); }
-            }
-            if let Some(cat) = self.categories.iter().find(|c| c.name == "Docs") {
-                if ext == "docx" { cats.push(cat.id.clone()); }
-            }
-            if let Some(cat) = self.categories.iter().find(|c| c.name == "Presentaciones") {
-                if ext == "pptx" { cats.push(cat.id.clone()); }
+            if let Some(cat_name) = file_type_to_category_name(&ext) {
+                if let Some(cat) = self.categories.iter().find(|c| c.name == cat_name) {
+                    cats.push(cat.id.clone());
+                }
             }
         }
         self.import_document(source_path, &name, "", &cats)
@@ -620,10 +614,10 @@ impl SgdApp {
                 }
                 let ext = path.extension().unwrap_or_default().to_string_lossy().to_lowercase();
                 if !matches!(ext.as_str(), "pdf" | "xlsx" | "xls" | "docx" | "pptx") {
-                    self.set_status(match l {
-                        Language::Spanish => format!("Formato no soportado: '.{}'", ext),
-                        Language::English => format!("Unsupported format: '.{}'", ext),
-                    });
+                    self.status_msg(l,
+                        format!("Formato no soportado: '.{}'", ext),
+                        format!("Unsupported format: '.{}'", ext),
+                    );
                     continue;
                 }
                 if self.show_add_dialog {
@@ -707,34 +701,34 @@ impl SgdApp {
                         if let Some(cats) = &action.old_categories {
                             let _ = db::set_document_categories(&self.db, &doc.id, cats);
                         }
-                        self.set_status(match l {
-                            Language::Spanish => format!("Deshecho: '{}' restaurado.", doc.name),
-                            Language::English => format!("Undone: '{}' restored.", doc.name),
-                        });
+                        self.status_msg(l,
+                        format!("Deshecho: '{}' restaurado.", doc.name),
+                        format!("Undone: '{}' restored.", doc.name),
+                    );
                     }
                 }
                 "trash" => {
                     if let Some(ref id) = action.document_id {
                         let _ = db::restore_document(&self.db, id);
-                        self.set_status(match l {
-                            Language::Spanish => "Deshecho: documento restaurado de papelera.".to_string(),
-                            Language::English => "Undone: document restored from trash.".to_string(),
-                        });
+                        self.status_msg(l,
+                            "Deshecho: documento restaurado de papelera.".to_string(),
+                            "Undone: document restored from trash.".to_string(),
+                        );
                     }
                 }
                 _ => {
-                    self.set_status(match l {
-                        Language::Spanish => "No se puede deshacer esta acción.".to_string(),
-                        Language::English => "Cannot undo this action.".to_string(),
-                    });
+                    self.status_msg(l,
+                        "No se puede deshacer esta acción.".to_string(),
+                        "Cannot undo this action.".to_string(),
+                    );
                 }
             }
             self.needs_refresh = true;
         } else {
-            self.set_status(match l {
-                Language::Spanish => "No hay acciones para deshacer.".to_string(),
-                Language::English => "No actions to undo.".to_string(),
-            });
+            self.status_msg(l,
+                "No hay acciones para deshacer.".to_string(),
+                "No actions to undo.".to_string(),
+            );
         }
     }
 }
@@ -899,8 +893,7 @@ impl eframe::App for SgdApp {
                         .max_height(80.0)
                         .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
                         .show(ui, |ui| {
-                            let main_names = [("PDF", "\u{1F4C4}"), ("Excel", "\u{1F4CA}"), ("Docs", "\u{1F4DD}"), ("Presentaciones", "\u{1F4F9}")];
-                            for (main_name, icon) in &main_names {
+                            for (main_name, _, _) in DEFAULT_CATEGORIES {
                                 if let Some(cat) = self.categories.iter().find(|c| c.name == *main_name) {
                                     let count = self.category_counts.get(&cat.id).copied().unwrap_or(0);
                                     let is_selected = matches!(&self.sidebar_section, SidebarSection::Category(id) if id == &cat.id);
@@ -910,7 +903,7 @@ impl eframe::App for SgdApp {
                                     if is_selected { ui.painter().rect_filled(crect, egui::Rounding::same(4.0), ui.visuals().selection.bg_fill); }
                                     let tc = ui.visuals().text_color();
                                     ui.painter().text(egui::pos2(crect.min.x + 8.0, crect.center().y), egui::Align2::LEFT_CENTER,
-                                        format!("{} {}", icon, cat.name), egui::FontId::proportional(font_size), tc);
+                                        format!("{} {}", category_icon(cat.name.as_str()), cat.name), egui::FontId::proportional(font_size), tc);
                                     ui.painter().text(egui::pos2(crect.max.x - 8.0, crect.center().y), egui::Align2::RIGHT_CENTER,
                                         &format!("{}", count), egui::FontId::proportional(font_size - 2.0), egui::Color32::GRAY);
                                     if cresp.clicked() {
@@ -1119,10 +1112,10 @@ impl eframe::App for SgdApp {
                                             let _ = db::restore_document(&self.db, &doc.id);
                                             let label = format!("{} '{}'", tr(l, "Documento restaurado", "Document restored"), doc.name);
                                             self.log_history("restore", &label, Some(&doc.id));
-                                            self.set_status(match l {
-                                                Language::Spanish => format!("'{}' restaurado.", doc.name),
-                                                Language::English => format!("'{}' restored.", doc.name),
-                                            });
+                                            self.status_msg(l,
+                        format!("'{}' restaurado.", doc.name),
+                        format!("'{}' restored.", doc.name),
+                    );
                                             self.needs_refresh = true;
                                             ui.close_menu();
                                         }
@@ -1160,16 +1153,16 @@ impl eframe::App for SgdApp {
                                             let full_path = self.storage.get_full_path(&doc.file_path);
                                             if full_path.exists() {
                                                 if opener::open(&full_path).is_err() {
-                                                    self.set_status(match l {
-                                                        Language::Spanish => format!("No se pudo abrir '{}'", doc.original_name),
-                                                        Language::English => format!("Could not open '{}'", doc.original_name),
-                                                    });
+                                                    self.status_msg(l,
+                        format!("No se pudo abrir '{}'", doc.original_name),
+                        format!("Could not open '{}'", doc.original_name),
+                    );
                                                 }
                                             } else {
-                                                self.set_status(match l {
-                                                    Language::Spanish => format!("Archivo no encontrado: {}", doc.original_name),
-                                                    Language::English => format!("File not found: {}", doc.original_name),
-                                                });
+                                                self.status_msg(l,
+                        format!("Archivo no encontrado: {}", doc.original_name),
+                        format!("File not found: {}", doc.original_name),
+                    );
                                             }
                                             ui.close_menu();
                                         }
@@ -1225,10 +1218,10 @@ impl eframe::App for SgdApp {
                                                             Language::Spanish => "Documento exportado con éxito.".to_string(),
                                                             Language::English => "Document exported successfully.".to_string(),
                                                         }),
-                                                        Err(e) => self.set_status(match l {
-                                                            Language::Spanish => format!("Error al exportar: {}", e),
-                                                            Language::English => format!("Export error: {}", e),
-                                                        }),
+                                                        Err(e) => self.status_msg(l,
+                        format!("Error al exportar: {}", e),
+                        format!("Export error: {}", e),
+                    ),
                                                     }
                                                 }
                                             } else {
@@ -1261,10 +1254,10 @@ impl eframe::App for SgdApp {
                                                 let _ = db::soft_delete_document(&self.db, &doc.id);
                                                 let label = format!("{} '{}'", tr(l, "Documento movido a papelera", "Document moved to trash"), doc.name);
                                                 self.log_history("trash", &label, Some(&doc.id));
-                                                self.set_status(match l {
-                                                    Language::Spanish => format!("'{}' movido a papelera.", doc.name),
-                                                    Language::English => format!("'{}' moved to trash.", doc.name),
-                                                });
+                                                self.status_msg(l,
+                        format!("'{}' movido a papelera.", doc.name),
+                        format!("'{}' moved to trash.", doc.name),
+                    );
                                                 self.needs_refresh = true;
                                             }
                                             ui.close_menu();
@@ -1358,10 +1351,10 @@ impl SgdApp {
                             if let Some(dir) = folder {
                                 let l = self.settings.language;
                                 let c = self.import_folder_recursive(&dir);
-                                self.set_status(match l {
-                                    Language::Spanish => format!("Carpeta importada: {} documentos agregados.", c),
-                                    Language::English => format!("Folder imported: {} documents added.", c),
-                                });
+                                self.status_msg(l,
+                        format!("Carpeta importada: {} documentos agregados.", c),
+                        format!("Folder imported: {} documents added.", c),
+                    );
                                 self.needs_refresh = true;
                                 self.show_add_dialog = false;
                             }
@@ -1406,18 +1399,11 @@ impl SgdApp {
                     if self.categories.is_empty() {
                         ui.colored_label(egui::Color32::GRAY, tr(l, "(Aún no hay carpetas.)", "(No categories yet.)"));
                     } else {
-                        let default_names = ["PDF", "Excel", "Docs", "Presentaciones"];
                         ui.horizontal_wrapped(|ui| {
-                            for name in &default_names {
+                            for (name, _, _) in DEFAULT_CATEGORIES {
                                 if let Some(cat) = self.categories.iter().find(|c| c.name == *name) {
                                     let is_selected = self.add_selected_cats.contains(&cat.id);
-                                    let icon_flag = match cat.name.as_str() {
-                                        "PDF" => "\u{1F4C4}",
-                                        "Excel" => "\u{1F4CA}",
-                                        "Docs" => "\u{1F4DD}",
-                                        "Presentaciones" => "\u{1F4F9}",
-                                        _ => "",
-                                    };
+                                                    let icon_flag = category_icon(cat.name.as_str());
                                     let bg = ui.visuals().widgets.inactive.bg_fill;
                                     let fg = ui.visuals().selection.bg_fill;
                                     let btn = egui::Button::new(format!("{} {}", icon_flag, cat.name))
@@ -1439,8 +1425,8 @@ impl SgdApp {
                     ui.add_space(10.0);
                     ui.horizontal(|ui| {
                         if ui.button(tr(l, "Cancelar", "Cancel")).clicked() { self.show_add_dialog = false; }
-                        if ui.add_enabled(!self.add_name.is_empty(), egui::Button::new(tr(l, "Guardar", "Save"))).clicked() {
-                            let src = self.add_file_path.clone().unwrap();
+                        if ui.add_enabled(!self.add_name.is_empty() && self.add_file_path.is_some(), egui::Button::new(tr(l, "Guardar", "Save"))).clicked() {
+                            let src = self.add_file_path.clone().unwrap(); // safe: checked is_some() above
                             let name = self.add_name.clone(); let desc = self.add_description.clone();
                             let cats = self.add_selected_cats.clone();
                             self.import_document(&src, &name, &desc, &cats);
@@ -1503,10 +1489,10 @@ impl SgdApp {
                             let _ = db::set_document_categories(&self.db, &self.edit_doc_id, &self.edit_selected_cats);
                             let label = format!("{} '{}'", tr(l, "Documento editado", "Document edited"), doc.name);
                             self.log_history("edit", &label, Some(&doc.id));
-                            self.set_status(match l {
-                                Language::Spanish => format!("Documento '{}' actualizado.", doc.name),
-                                Language::English => format!("Document '{}' updated.", doc.name),
-                            });
+                            self.status_msg(l,
+                        format!("Documento '{}' actualizado.", doc.name),
+                        format!("Document '{}' updated.", doc.name),
+                    );
                         } else {
                             self.set_status(match l {
                                 Language::Spanish => "Error al actualizar el documento.".to_string(),
@@ -1590,10 +1576,16 @@ impl SgdApp {
                         Ok(_) => {
                             let label = format!("{} '{}'", tr(l, "Carpeta creada", "Category created"), cat.name);
                             self.log_history("category_add", &label, None);
-                            self.set_status(match l { Language::Spanish => format!("Carpeta '{}' creada.", cat.name), Language::English => format!("Category '{}' created.", cat.name) });
+                            self.status_msg(l,
+                        format!("Carpeta '{}' creada.", cat.name),
+                        format!("Category '{}' created.", cat.name),
+                    );
                             self.new_cat_name.clear(); self.new_cat_description.clear(); self.new_cat_icon.clear(); self.needs_refresh = true;
                         }
-                        Err(e) => self.set_status(match l { Language::Spanish => format!("Error al crear carpeta: {}", e), Language::English => format!("Error creating category: {}", e) }),
+                        Err(e) => self.status_msg(l,
+                        format!("Error al crear carpeta: {}", e),
+                        format!("Error creating category: {}", e),
+                    ),
                     }
                 }
             });
@@ -1649,10 +1641,16 @@ impl SgdApp {
                         Ok(_) => {
                             let label = format!("{} '{}'", tr(l, "Plantilla creada", "Template created"), tpl.name);
                             self.log_history("template_add", &label, None);
-                            self.set_status(match l { Language::Spanish => format!("Plantilla '{}' creada.", tpl.name), Language::English => format!("Template '{}' created.", tpl.name) });
+                            self.status_msg(l,
+                        format!("Plantilla '{}' creada.", tpl.name),
+                        format!("Template '{}' created.", tpl.name),
+                    );
                             self.new_tpl_name.clear(); self.new_tpl_description.clear(); self.needs_refresh = true;
                         }
-                        Err(e) => self.set_status(match l { Language::Spanish => format!("Error al crear plantilla: {}", e), Language::English => format!("Error creating template: {}", e) }),
+                        Err(e) => self.status_msg(l,
+                        format!("Error al crear plantilla: {}", e),
+                        format!("Error creating template: {}", e),
+                    ),
                     }
                 }
             });
@@ -1969,7 +1967,7 @@ impl SgdApp {
     fn render_categories_popup(&mut self, ctx: &egui::Context) {
         let mut open = self.show_categories_popup;
         let l = self.settings.language;
-        let other_cats: Vec<_> = self.categories.iter().filter(|c| !["PDF", "Excel", "Docs", "Presentaciones"].contains(&c.name.as_str())).cloned().collect();
+        let other_cats: Vec<_> = self.categories.iter().filter(|c| !is_default_category(&c.name)).cloned().collect();
         egui::Window::new(tr(l, "Todas las Carpetas", "All Categories"))
             .open(&mut open).resizable(false).default_size([250.0, 300.0])
             .show(ctx, |ui| {
@@ -2006,7 +2004,7 @@ impl SgdApp {
     fn render_add_cat_popup(&mut self, ctx: &egui::Context) {
         let mut open = self.show_add_cat_popup;
         let l = self.settings.language;
-        let other_cats: Vec<_> = self.categories.iter().filter(|c| !["PDF", "Excel", "Docs", "Presentaciones"].contains(&c.name.as_str())).cloned().collect();
+        let other_cats: Vec<_> = self.categories.iter().filter(|c| !is_default_category(&c.name)).cloned().collect();
         let result = egui::Window::new(tr(l, "Otras Carpetas", "Other Categories"))
             .open(&mut open).resizable(false).default_size([220.0, 200.0])
             .show(ctx, |ui| {
@@ -2361,10 +2359,10 @@ impl SgdApp {
                                 Language::Spanish => "Respaldo creado con éxito.".to_string(),
                                 Language::English => "Backup created successfully.".to_string(),
                             }),
-                            Err(e) => self.set_status(match l {
-                                Language::Spanish => format!("Error al crear respaldo: {}", e),
-                                Language::English => format!("Backup error: {}", e),
-                            }),
+                            Err(e) => self.status_msg(l,
+                        format!("Error al crear respaldo: {}", e),
+                        format!("Backup error: {}", e),
+                    ),
                         }
                     }
                 }
@@ -2400,10 +2398,10 @@ impl SgdApp {
                                 Language::Spanish => "Respaldo automático ejecutado.".to_string(),
                                 Language::English => "Automatic backup completed.".to_string(),
                             }),
-                            Err(e) => self.set_status(match l {
-                                Language::Spanish => format!("Error en respaldo: {}", e),
-                                Language::English => format!("Backup error: {}", e),
-                            }),
+                            Err(e) => self.status_msg(l,
+                        format!("Error en respaldo: {}", e),
+                        format!("Backup error: {}", e),
+                    ),
                         }
                     }
                 }

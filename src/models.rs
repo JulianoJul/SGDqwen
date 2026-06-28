@@ -1,5 +1,45 @@
 use serde::{Deserialize, Serialize};
 
+// ── Constants ──────────────────────────────────────────────
+
+pub const DEFAULT_BASE_PATH: &str = "./sgd_data";
+pub const DB_FILENAME: &str = "documents.db";
+pub const SETTINGS_FILENAME: &str = "settings.json";
+pub const FILES_SUBDIR: &str = "files";
+
+pub const DEFAULT_CATEGORIES: &[(&str, &str, &str)] = &[
+    ("PDF", "Documentos PDF", "\u{1F4C4}"),
+    ("Excel", "Hojas de calculo Excel", "\u{1F4CA}"),
+    ("Docs", "Documentos de Word", "\u{1F4DD}"),
+    ("Presentaciones", "Presentaciones PowerPoint", "\u{1F4F9}"),
+];
+
+pub fn is_default_category(name: &str) -> bool {
+    DEFAULT_CATEGORIES.iter().any(|(n, _, _)| *n == name)
+}
+
+pub fn file_type_to_category_name(ext: &str) -> Option<&'static str> {
+    match ext {
+        "pdf" => Some("PDF"),
+        "xlsx" | "xls" => Some("Excel"),
+        "docx" => Some("Docs"),
+        "pptx" => Some("Presentaciones"),
+        _ => None,
+    }
+}
+
+pub fn category_icon(name: &str) -> &'static str {
+    match name {
+        "PDF" => "\u{1F4C4}",
+        "Excel" => "\u{1F4CA}",
+        "Docs" => "\u{1F4DD}",
+        "Presentaciones" => "\u{1F4F9}",
+        _ => "",
+    }
+}
+
+
+
 #[derive(Debug, Clone, Default)]
 pub struct Document {
     pub id: String,

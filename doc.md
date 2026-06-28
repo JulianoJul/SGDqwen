@@ -177,6 +177,24 @@ cargo run
 
 **Requisitos:** Rust edition 2021. No requiere dependencias externas del sistema.
 
+## Historial de Cambios
+
+### Fixes de Auditoría (Junio 2026)
+
+| # | Archivo | Cambio | Razón |
+|---|---------|--------|-------|
+| 1 | `src/app.rs` | `db_path.to_str().unwrap()` → `.ok_or("Invalid path")?` | Posible panic con rutas no UTF-8 |
+| 2 | `src/app.rs` | Botón Guardar validado con `add_file_path.is_some()` | Posible panic al hacer unwrap de None |
+| 3 | `src/app.rs` | `days_in_month` usa `and_then` en vez de `unwrap()` | Posible panic con fechas inválidas |
+| 4 | `src/models.rs` | Nuevas constantes `DEFAULT_BASE_PATH`, `DB_FILENAME`, `SETTINGS_FILENAME`, `FILES_SUBDIR` | Eliminar hardcodeo de rutas y nombres de archivo |
+| 5 | `src/app.rs`, `src/storage.rs`, `src/db.rs` | Usar constantes en vez de literales `"./sgd_data"`, `"documents.db"`, `"settings.json"`, `"files"` | DRY + mantenibilidad |
+| 6 | `src/models.rs` | Nueva constante `DEFAULT_CATEGORIES`, helpers `is_default_category()`, `file_type_to_category_name()`, `category_icon()` | Eliminar hardcodeo de nombres de categorías en 10+ ubicaciones |
+| 7 | `src/app.rs` | Sidebar, add dialog, categories popup usan `DEFAULT_CATEGORIES` e `is_default_category` | DRY + mantenibilidad |
+| 8 | `src/app.rs` | `file_type_to_category_name()` reemplaza 3 mapeos duplicados ext→categoría | DRY |
+| 9 | `src/app.rs` | Nuevo método `status_msg()` para mensajes bilingües, ~15 llamadas migradas | DRY: elimina patrón `match l { Spanish => ..., English => ... }` repetido |
+| 10 | `src/db.rs` | `batch_permanently_delete` usa SELECT + IN en vez de N queries individuales | Performance: elimina N+1 |
+| 11 | `src/app.rs` | `month_name_es/en` usan arrays `MONTH_NAMES_ES/EN` en vez de match extenso | Código más limpio |
+
 ## Reglas del Proceso
 
 1. **doc.md primero**: antes de cualquier implementación o cambio de código, actualizar esta documentación con lo que se planea hacer.

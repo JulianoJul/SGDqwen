@@ -1,7 +1,7 @@
 use rusqlite::{Connection, Result, params};
 use std::collections::HashMap;
 
-use crate::models::{AutoRule, Category, Document, DocumentRelation, DocumentVersion, HistoryEntry, Reminder, Template};
+use crate::models::{AutoRule, Category, DEFAULT_CATEGORIES, Document, DocumentRelation, DocumentVersion, HistoryEntry, Reminder, Template};
 
 fn migrate(conn: &Connection) -> Result<()> {
     let cols: Vec<String> = conn
@@ -144,13 +144,7 @@ pub fn init_db(db_path: &str) -> Result<Connection> {
 }
 
 pub fn ensure_default_categories(conn: &Connection) -> Result<()> {
-    let defaults: [(&str, &str, &str); 4] = [
-        ("PDF", "Documentos PDF", "\u{1F4C4}"),
-        ("Excel", "Hojas de calculo Excel", "\u{1F4CA}"),
-        ("Docs", "Documentos de Word", "\u{1F4DD}"),
-        ("Presentaciones", "Presentaciones PowerPoint", "\u{1F4F9}"),
-    ];
-    for (name, desc, icon) in defaults {
+    for (name, desc, icon) in DEFAULT_CATEGORIES {
         let exists: bool = conn.query_row(
             "SELECT COUNT(*) FROM categories WHERE name=?1", params![name],
             |row| row.get::<_, i64>(0),
@@ -240,17 +234,17 @@ pub fn batch_soft_delete(conn: &Connection, ids: &[String]) -> Result<()> {
 
 pub fn batch_permanently_delete(conn: &Connection, storage: &crate::storage::Storage, ids: &[String]) -> Result<()> {
     if ids.is_empty() { return Ok(()); }
-    for id in ids {
-        if let Ok(doc) = conn.query_row(
-            &format!("SELECT {} FROM documents WHERE id=?1", DOC_COLS), params![id],
-            row_to_document,
-        ) {
-            let _ = storage.delete_file(&doc.file_path);
-        }
-    }
+    // Single query to get all documents before deletion (avoid N+1)
     let placeholders: Vec<String> = ids.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect();
-    let sql = format!("DELETE FROM documents WHERE id IN ({})", placeholders.join(","));
-    conn.execute(&sql, rusqlite::params_from_iter(ids))?;
+    let select_sql = format!("SELECT {} FROM documents WHERE id IN ({})", DOC_COLS, placeholders.join(","));
+    let mut stmt = conn.prepare(&select_sql)?;
+    let docs: Vec<Document> = stmt.query_map(rusqlite::params_from_iter(ids), row_to_document)?
+        .collect::<Result<Vec<_>>>()?;
+    for doc in &docs {
+        let _ = storage.delete_file(&doc.file_path);
+    }
+    let delete_sql = format!("DELETE FROM documents WHERE id IN ({})", placeholders.join(","));
+    conn.execute(&delete_sql, rusqlite::params_from_iter(ids))?;
     Ok(())
 }
 
