@@ -1,0 +1,5 @@
+target/
+sgd_data/
+output/
+*.db
+*.sqlite

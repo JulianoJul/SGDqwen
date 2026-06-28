@@ -1,0 +1,119 @@
+# Contexto: Proyecto Rust (egui 0.27 + rusqlite + SQLite)
+
+SGD — Sistema de Gestión Documental. App de escritorio para administrar documentos digitales (PDF, Excel, DOCX, PPTX). ~3500 líneas en 5 archivos. Almacenamiento local SQLite + sistema de archivos con subdirectorios por carpeta.
+
+---
+
+## ⚠️ RESTRICCIONES DE ENTORNO
+
+**No intentes compilar ni instalar Rust toolchain.**
+
+**IMPORTANTE — LECTURA DE ARCHIVOS:**
+- ✅ **LEE ÚNICAMENTE:** `combined.txt` (Cargo.toml + todos los .rs + doc.md)
+- ❌ **NO LEAS:** Los archivos `.rs` individuales en src/
+- Todo el código fuente está consolidado en `combined.txt`
+
+---
+
+## Rol
+
+Auditor de código estático. Buscas violaciones a las reglas del proyecto en el código Rust contenido en `combined.txt`.
+
+---
+
+## REGLAS DEL PROYECTO
+
+### 1. Zero hardcodeo
+No debe haber strings/valores literales que dependan del schema (nombres de categoría, patrones de auto-reglas, rutas). Todo debe ser configurable desde Settings + env vars o constantes.
+
+### 2. DRY + Reutilización
+Toda lógica debe tener representación única. Si un patrón aparece en >1 lugar, extraer a función reutilizable. No importa el tamaño de la función; la métrica es cero redundancia y SRP.
+
+### 3. Manejo de errores
+Sin `unwrap()` que pueda panic. Usar `?`, `unwrap_or_default`, `unwrap_or`. Errores visibles al usuario vía `set_status`.
+
+### 4. SQL correcto
+- Consultas preparadas con `params!` (nunca interpolación directa)
+- JOINs eficientes, sin N+1 queries
+- Transacciones para operaciones multi-paso
+
+---
+
+## MÓDULOS CLAVE
+
+| Archivo | Contenido clave |
+|---------|-----------------|
+| `src/models.rs` | Document, Category, Template, Settings, Theme (15 variantes), UndoAction, DocumentRelation, AutoRule, Reminder, DocumentVersion, Language |
+| `src/db.rs` | init_db, CRUD documentos/categorías/plantillas/historial/relaciones/reglas/recordatorios/versiones, stats, migraciones |
+| `src/storage.rs` | Storage::import_file, calculate_checksum (SHA256), backup_all, delete_file |
+| `src/app.rs` | SgdApp (estado global + UI), eframe::App::update, sidebar, dialogs, filtros, drag & drop, folder watcher |
+
+---
+
+## MODELOS CLAVE
+
+- **Document**: id, name, file_type, file_path, original_name, size, description, notes, checksum, created_at, updated_at, favorite, deleted_at, content_text
+- **Category**: id, name, description, icon (emoji)
+- **Settings**: theme, language, font_size, confirm_delete, auto_open_after_import, reduced_motion, table_density, show_column_{type,size,date}, trash_auto_delete_days, backup_{enabled,interval_hours,path}, watch_folder_{enabled,path}
+- **Theme**: Light, Dark, HighContrast, Forest, Ocean, Sunset, Midnight, Lavender, Coral, Graphite, Retro, Terminal, Halloween, Navidad, ElAri
+  - `to_visuals()` → `egui::Visuals`
+  - `preview_color()` → `egui::Color32`
+
+---
+
+## INSTRUCCIÓN ESPECÍFICA
+
+Realiza una auditoría completa del código Rust (**leyendo únicamente `combined.txt`**) buscando:
+
+### a) VIOLACIONES DE HARDCODEO
+Literales que dependan del schema (nombres de carpeta, patrones, rutas).
+
+### b) VIOLACIONES DE DRY/REUTILIZACIÓN
+Lógica duplicada (bloques copiados en >1 lugar), patrones que deberían ser funciones reutilizables, responsabilidades mezcladas en una misma función.
+
+### c) ERRORES DE MANEJO
+`unwrap()` que pueda panic, errores no propagados.
+
+### d) VIOLACIONES SQL
+Interpolación directa, N+1 queries, falta de transacciones.
+
+---
+
+## FORMATO DE REPORTE
+
+Para cada hallazgo:
+```
+[SEVERIDAD] archivo:línea
+- Regla violada: [descripción breve]
+- Problema: [código o patrón específico]
+- Fix sugerido: [acción concreta]
+```
+
+**Severidad:** Alta | Media | Baja
+
+---
+
+## ENTREGABLE FINAL
+
+Generar `plan_modificaciones.md` con hallazgos priorizados (Alta > Media > Baja), cada entrada con Archivo, Línea, Descripción, Fix sugerido, Estado: pendiente.
+
+---
+
+## NOTAS ADICIONALES
+
+- El proyecto tiene 8 tablas SQLite con 12 índices
+- Backend uses CASCADE para consistencia referencial
+- El sistema de archivos usa subdirectorios por carpeta bajo `sgd_data/files/`
+- Temas implementan `egui::Visuals` personalizados sin depender de librerías externas
+
+---
+
+## REGLAS DEL PROCESO PARA OPENCODE (incluir en plan_modificaciones.md)
+
+Estas reglas deben copiarse al final del `plan_modificaciones.md` que generes:
+
+1. `plan_modificaciones.md` es la guía — opencode lee este archivo e implementa los fixes uno por uno de mayor a menor prioridad
+2. Después de cada fix, opencode ejecuta `make build` para verificar que compila
+3. Al terminar todos los fixes, opencode ejecuta `make build && make combine`
+4. opencode actualiza `doc.md` con historial de cambios (fecha, archivos, razón de cada fix)
+5. opencode sube a GitHub con `make github msg="mensaje"`
