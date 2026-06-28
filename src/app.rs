@@ -12,7 +12,7 @@ use crate::db;
 use crate::models::{
     AutoRule, Category, category_icon, CATEGORY_ICONS, DAY_NAMES_EN, DAY_NAMES_ES, DB_FILENAME,
     DEFAULT_FILE_TYPE_STYLE, default_base_path, default_categories, default_category_names,
-    FILE_TYPE_STYLES, MONTH_NAMES_EN, MONTH_NAMES_ES, Document, DocumentRelation,
+    FILE_TYPE_STYLES, MONTH_NAMES_EN, MONTH_NAMES_ES, OTHER_SUBDIR, Document, DocumentRelation,
     DocumentVersion, file_type_to_category_name, HistoryEntry, is_default_category, Language,
     Reminder, SETTINGS_FILENAME, Settings, Template, Theme, UndoAction,
 };
@@ -65,6 +65,10 @@ fn get_extension(path: impl AsRef<Path>) -> String {
 
 fn get_file_stem(path: impl AsRef<Path>) -> String {
     path.as_ref().file_stem().unwrap_or_default().to_string_lossy().to_string()
+}
+
+fn is_supported_extension(ext: &str) -> bool {
+    matches!(ext, "pdf" | "xlsx" | "xls" | "docx" | "pptx")
 }
 
 fn file_type_style(ft: &str) -> (&'static str, egui::Color32) {
@@ -140,10 +144,7 @@ enum SidebarSection { All, Favorites, Recent, Trash, Category(String) }
 #[derive(Debug, Clone, PartialEq)]
 struct FilterState {
     enabled: bool,
-    pdf: bool,
-    excel: bool,
-    docs: bool,
-    pptx: bool,
+    file_types: HashSet<String>,
     size_min: String,
     size_max: String,
     date_from: String,
@@ -152,7 +153,8 @@ struct FilterState {
 
 impl Default for FilterState {
     fn default() -> Self {
-        Self { enabled: false, pdf: true, excel: true, docs: true, pptx: true,
+        let all_types: HashSet<String> = default_category_names().iter().map(|&n| n.to_lowercase()).collect();
+        Self { enabled: false, file_types: all_types,
                size_min: String::new(), size_max: String::new(),
                date_from: String::new(), date_to: String::new() }
     }
@@ -470,10 +472,8 @@ impl SgdApp {
             let size_min = f.size_min.parse::<i64>().ok();
             let size_max = f.size_max.parse::<i64>().ok();
             self.documents.retain(|d| {
-                let type_ok = (f.pdf && d.file_type == "pdf")
-                    || (f.excel && (d.file_type == "xlsx" || d.file_type == "xls"))
-                    || (f.docs && d.file_type == "docx")
-                    || (f.pptx && d.file_type == "pptx");
+                let cat_name = file_type_to_category_name(&d.file_type).unwrap_or("").to_lowercase();
+                let type_ok = f.file_types.contains(&cat_name);
                 let size_ok = size_min.map_or(true, |min| d.size >= min)
                     && size_max.map_or(true, |max| d.size <= max);
                 let date_ok = if f.date_from.is_empty() && f.date_to.is_empty() {
@@ -519,7 +519,7 @@ impl SgdApp {
         }
         file_type_to_category_name(&get_extension(source_path))
             .map(|name| name.to_lowercase())
-            .unwrap_or_else(|| "otros".to_string())
+            .unwrap_or_else(|| OTHER_SUBDIR.to_string())
     }
 
     fn ensure_category_dirs(&self) {
@@ -529,7 +529,7 @@ impl SgdApp {
         for name in default_category_names() {
             let _ = self.storage.ensure_subdir(&name.to_lowercase());
         }
-        let _ = self.storage.ensure_subdir("otros");
+        let _ = self.storage.ensure_subdir(OTHER_SUBDIR);
     }
 
     fn auto_select_categories_for_path(&mut self, path: &Path) {
@@ -606,7 +606,7 @@ impl SgdApp {
 
     fn import_document_full(&mut self, source_path: &Path) -> bool {
         let ext = get_extension(source_path);
-        if !matches!(ext.as_str(), "pdf" | "xlsx" | "xls" | "docx" | "pptx") { return false; }
+        if !is_supported_extension(&ext) { return false; }
         let name = get_file_stem(source_path);
         let mut cats = Vec::new();
         if let Ok(matched) = db::match_auto_rules(&self.db, &source_path.to_string_lossy()) {
@@ -633,7 +633,7 @@ impl SgdApp {
                     continue;
                 }
                 let ext = get_extension(path);
-                if !matches!(ext.as_str(), "pdf" | "xlsx" | "xls" | "docx" | "pptx") {
+                if !is_supported_extension(&ext) {
                     self.status_msg(l,
                         format!("Formato no soportado: '.{}'", ext),
                         format!("Unsupported format: '.{}'", ext),
@@ -680,7 +680,7 @@ impl SgdApp {
                 for path in &event.paths {
                     if path.is_file() {
                         let ext = get_extension(path);
-                        if matches!(ext.as_str(), "pdf" | "xlsx" | "xls" | "docx" | "pptx") {
+                        if is_supported_extension(&ext) {
                             if !self.documents.iter().any(|d| d.original_name == path.file_name().unwrap_or_default().to_string_lossy().to_string()) {
                                 p.push(path.clone());
                             }
@@ -1018,16 +1018,16 @@ impl eframe::App for SgdApp {
                                     self.needs_refresh = true;
                                 }
                                 if ui.button(format!("\u{1F4CB} {}", tr(l, "Cambiar Carpeta", "Change Category"))).clicked() {
-                                    let first = self.selected_docs.iter().next().cloned().unwrap_or_default();
-                                    let first_clone = first.clone();
-                                    self.edit_doc_id = first;
-                                    if let Some(doc) = self.documents.iter().find(|d| d.id == first_clone) {
-                                        self.edit_name = doc.name.clone();
-                                        self.edit_description = doc.description.clone();
-                                        self.edit_notes = doc.notes.clone();
-                                        self.edit_selected_cats = db::get_document_category_ids(&self.db, &first_clone).unwrap_or_default();
+                                    if let Some(first) = self.selected_docs.iter().next().cloned() {
+                                        self.edit_doc_id = first.clone();
+                                        if let Some(doc) = self.documents.iter().find(|d| d.id == first) {
+                                            self.edit_name = doc.name.clone();
+                                            self.edit_description = doc.description.clone();
+                                            self.edit_notes = doc.notes.clone();
+                                            self.edit_selected_cats = db::get_document_category_ids(&self.db, &first).unwrap_or_default();
+                                        }
+                                        self.show_edit_dialog = true;
                                     }
-                                    self.show_edit_dialog = true;
                                 }
                                 if ui.button(format!("\u{1F4E5} {}", tr(l, "Exportar", "Export"))).clicked() {
                                     let dest = rfd::FileDialog::new().set_title(tr(l, "Seleccionar carpeta de destino", "Select destination folder")).pick_folder();
@@ -1476,31 +1476,25 @@ impl SgdApp {
                     if ui.button(tr(l, "Cancelar", "Cancel")).clicked() { self.show_edit_dialog = false; }
                     if ui.add_enabled(!self.edit_name.is_empty(), egui::Button::new(tr(l, "Guardar Cambios", "Save Changes"))).clicked() {
                         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-                        let original = self.documents.iter().find(|d| d.id == self.edit_doc_id).cloned();
-                        let mut doc = original.unwrap_or_else(|| Document {
-                            id: String::new(), name: String::new(), file_type: String::new(),
-                            file_path: String::new(), original_name: String::new(), size: 0,
-                            description: String::new(), notes: String::new(), checksum: String::new(),
-                            created_at: String::new(), updated_at: String::new(),
-                            favorite: false, deleted_at: None, content_text: String::new(),
-                        });
-                        doc.name = self.edit_name.clone();
-                        doc.description = self.edit_description.clone();
-                        doc.notes = self.edit_notes.clone();
-                        doc.updated_at = now;
-                        if db::update_document(&self.db, &doc).is_ok() {
-                            let _ = db::set_document_categories(&self.db, &self.edit_doc_id, &self.edit_selected_cats);
-                            let label = format!("{} '{}'", tr(l, "Documento editado", "Document edited"), doc.name);
-                            self.log_history("edit", &label, Some(&doc.id));
-                            self.status_msg(l,
-                        format!("Documento '{}' actualizado.", doc.name),
-                        format!("Document '{}' updated.", doc.name),
-                    );
-                        } else {
-                            self.set_status(tr(l, "Error al actualizar el documento.", "Error updating document.").to_string());
+                        if let Some(mut doc) = self.documents.iter().find(|d| d.id == self.edit_doc_id).cloned() {
+                            doc.name = self.edit_name.clone();
+                            doc.description = self.edit_description.clone();
+                            doc.notes = self.edit_notes.clone();
+                            doc.updated_at = now;
+                            if db::update_document(&self.db, &doc).is_ok() {
+                                let _ = db::set_document_categories(&self.db, &self.edit_doc_id, &self.edit_selected_cats);
+                                let label = format!("{} '{}'", tr(l, "Documento editado", "Document edited"), doc.name);
+                                self.log_history("edit", &label, Some(&doc.id));
+                                self.status_msg(l,
+                            format!("Documento '{}' actualizado.", doc.name),
+                            format!("Document '{}' updated.", doc.name),
+                        );
+                            } else {
+                                self.set_status(tr(l, "Error al actualizar el documento.", "Error updating document.").to_string());
+                            }
+                            self.needs_refresh = true;
+                            self.show_edit_dialog = false;
                         }
-                        self.needs_refresh = true;
-                        self.show_edit_dialog = false;
                     }
                 });
             });
@@ -2038,10 +2032,13 @@ impl SgdApp {
 
                 ui.group(|ui| {
                 ui.label(tr(l, "Tipo de archivo:", "File type:"));
-                ui.checkbox(&mut self.filter_state.pdf, "PDF");
-                ui.checkbox(&mut self.filter_state.excel, "Excel");
-                ui.checkbox(&mut self.filter_state.docs, "DOCX");
-                ui.checkbox(&mut self.filter_state.pptx, "PPTX");
+                for (name, _, _) in default_categories() {
+                    let key = name.to_lowercase();
+                    let mut checked = self.filter_state.file_types.contains(&key);
+                    ui.checkbox(&mut checked, *name);
+                    if checked { self.filter_state.file_types.insert(key); }
+                    else { self.filter_state.file_types.remove(&key); }
+                }
                 });
 
                 ui.group(|ui| {

@@ -8,6 +8,7 @@ pub fn default_base_path() -> String {
 pub const DB_FILENAME: &str = "documents.db";
 pub const SETTINGS_FILENAME: &str = "settings.json";
 pub const FILES_SUBDIR: &str = "files";
+pub const OTHER_SUBDIR: &str = "otros";
 
 const DEFAULT_CATEGORIES_INTERNAL: &[(&str, &str, &str)] = &[
     ("PDF", "Documentos PDF", "\u{1F4C4}"),

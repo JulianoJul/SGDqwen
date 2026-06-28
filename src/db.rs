@@ -148,7 +148,7 @@ pub fn ensure_default_categories(conn: &Connection) -> Result<()> {
         let exists: bool = conn.query_row(
             "SELECT COUNT(*) FROM categories WHERE name=?1", params![name],
             |row| row.get::<_, i64>(0),
-        ).map(|c| c > 0).unwrap_or(false);
+        ).map(|c| c > 0)?;
         if !exists {
             let id = uuid::Uuid::new_v4().to_string();
             conn.execute(

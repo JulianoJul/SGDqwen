@@ -28,8 +28,12 @@ impl Storage {
     }
 
     pub fn import_file(&self, source: &Path, subdir: &str) -> io::Result<(String, String, i64)> {
-        let original_name = source.file_name().unwrap_or_default().to_string_lossy().to_string();
-        let ext = source.extension().unwrap_or_default().to_string_lossy().to_string().to_lowercase();
+        let original_name = source.file_name()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, format!("Path '{}' has no file name", source.display())))?
+            .to_string_lossy().to_string();
+        let ext = source.extension()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, format!("Path '{}' has no extension", source.display())))?
+            .to_string_lossy().to_string().to_lowercase();
         let uuid = Uuid::new_v4();
         let filename = if ext.is_empty() { uuid.to_string() } else { format!("{}.{}", uuid, ext) };
         let subdir_path = self.files_path.join(subdir);
